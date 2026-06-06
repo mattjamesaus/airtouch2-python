@@ -35,6 +35,7 @@ class ControlStatusSubType(IntEnum):
     GROUP_STATUS = 0x21
     AC_CONTROL = 0x22
     AC_STATUS = 0x23
+    AUX_SENSOR_STATUS = 0x2B
 
 
 @dataclass
@@ -65,26 +66,29 @@ class SubDataLength(Serializable):
 class ControlStatusSubHeader(Serializable):
     sub_type: ControlStatusSubType
     subdata_length: SubDataLength
+    raw_sub_type: int | None = None
 
     @staticmethod
     def from_bytes(subheader_bytes: bytes) -> ControlStatusSubHeader:
         if len(subheader_bytes) != CONTROL_STATUS_SUBHEADER_LENGTH:
             raise ValueError("Unexpected control/status subheader size")
+        raw_sub_type = subheader_bytes[0]
         try:
-            subtype = ControlStatusSubType(subheader_bytes[0])
+            subtype = ControlStatusSubType(raw_sub_type)
         except ValueError as e:
             _LOGGER.warning(
-                f"Unknown message type in header ({hex(subheader_bytes[0])})", exc_info=e)
+                f"Unknown message type in header ({hex(raw_sub_type)})", exc_info=e)
             subtype = ControlStatusSubType.UNSET
 
         data_length = SubDataLength.from_bytes(subheader_bytes[2:8])
-        return ControlStatusSubHeader(subtype, data_length)
+        return ControlStatusSubHeader(subtype, data_length, raw_sub_type)
 
     @staticmethod
     def from_buffer(buffer: Buffer) -> ControlStatusSubHeader:
         return ControlStatusSubHeader.from_bytes(buffer.read_bytes(CONTROL_STATUS_SUBHEADER_LENGTH))
 
     def to_bytes(self) -> bytes:
-        return self.sub_type.to_bytes(1, 'big') + \
+        type_byte = self.raw_sub_type if self.raw_sub_type is not None else self.sub_type
+        return int(type_byte).to_bytes(1, 'big') + \
             bytes(1) + \
             self.subdata_length.to_bytes()

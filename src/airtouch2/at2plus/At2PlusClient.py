@@ -7,6 +7,7 @@ from airtouch2.at2plus.At2PlusGroup import At2PlusGroup
 from airtouch2.common.NetClient import NetClient
 from airtouch2.protocol.at2plus.control_status_common import ControlStatusSubHeader, ControlStatusSubType
 from airtouch2.protocol.at2plus.extended_common import ExtendedMessageSubType, ExtendedSubHeader
+from airtouch2.protocol.at2plus.messages.AuxSensorStatus import AuxSensorStatusMessage
 from airtouch2.protocol.at2plus.message_common import HEADER_LENGTH, HEADER_MAGIC, Header, Message, MessageType
 from airtouch2.protocol.at2plus.messages.AcAbilityMessage import AcAbility, AcAbilityMessage, RequestAcAbilityMessage
 from airtouch2.protocol.at2plus.messages.AcStatus import AcStatusMessage
@@ -86,9 +87,14 @@ class At2PlusClient:
                 group_status_message = GroupStatusMessage.from_bytes(
                     message.data_buffer.read_bytes(subheader.subdata_length.total()))
                 self._task_creator(self._handle_group_status_message(group_status_message))
+            elif subheader.sub_type == ControlStatusSubType.AUX_SENSOR_STATUS:
+                aux_status_message = AuxSensorStatusMessage.from_bytes(
+                    message.data_buffer.read_bytes(subheader.subdata_length.total()))
+                _LOGGER.debug("Received aux sensor status: %s", aux_status_message.statuses)
             else:
+                raw_subtype = subheader.raw_sub_type if subheader.raw_sub_type is not None else int(subheader.sub_type)
                 _LOGGER.warning(
-                    f"Unknown status message type: subtype={subheader.sub_type}, data={message.data_buffer.to_bytes().hex(':')}")
+                    f"Unknown status message type: subtype={subheader.sub_type}, raw_subtype={hex(raw_subtype)}, data={message.data_buffer.to_bytes().hex(':')}")
         elif message.header.type == MessageType.EXTENDED:
             subheader = ExtendedSubHeader.from_buffer(message.data_buffer)
             if subheader.sub_type == ExtendedMessageSubType.ABILITY:
