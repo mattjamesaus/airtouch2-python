@@ -7,7 +7,7 @@ from airtouch2.at2plus.At2PlusClient import At2PlusClient
 from airtouch2.protocol.at2plus.messages.AcAbilityMessage import AcAbility, AcAbilityMessage, SetpointLimits
 from airtouch2.protocol.at2plus.enums import AcFanSpeed, AcMode, AcPower, GroupPower, AcSetPower, AcSetMode
 from airtouch2.protocol.at2plus.extended_common import ExtendedMessageSubType, ExtendedSubHeader
-from airtouch2.protocol.at2plus.message_common import AddressMsgType, Header, MessageType, Message
+from airtouch2.protocol.at2plus.message_common import AddressMsgType, Header, MessageType, Message, add_checksum_message_buffer, prime_message_buffer
 from airtouch2.protocol.at2plus.messages.AcAbilityMessage import AcAbility, AcAbilityMessage, RequestAcAbilityMessage
 from airtouch2.protocol.at2plus.messages.AcStatus import AcStatus, AcStatusMessage
 from airtouch2.protocol.at2plus.messages.GroupStatus import GroupStatus, GroupStatusMessage
@@ -39,14 +39,20 @@ class TestAt2PlusClient(unittest.IsolatedAsyncioTestCase):
     async def test_read_message_returns_message_when_checksum_is_valid(self):
         client = At2PlusClient("127.0.0.1", task_creator=lambda coro: None)
         status = AcStatus(1, AcPower.ON, AcMode.COOL, AcFanSpeed.MEDIUM, 22.0, 22.0, False, False, False, False, 0)
-        message_bytes = AcStatusMessage([status]).to_bytes()
+        subdata = AcStatusMessage([status]).to_bytes()[8:-2]
+        header = Header(AddressMsgType.NORMAL, MessageType.CONTROL_STATUS, len(subdata), _received=True)
+        buffer = prime_message_buffer(header)
+        buffer.append_bytes(subdata)
+        add_checksum_message_buffer(buffer)
+        message_bytes = buffer.to_bytes()
+
         client._client = Mock()
         client._client.read_bytes = AsyncMock(side_effect=[
             b"\x55",
             b"\x55",
-            message_bytes[2:8],
-            message_bytes[8:-2],
-            message_bytes[-2:]
+            bytes(message_bytes[2:8]),
+            bytes(message_bytes[8:-2]),
+            bytes(message_bytes[-2:])
         ])
 
         message = await client._read_message()
@@ -56,7 +62,12 @@ class TestAt2PlusClient(unittest.IsolatedAsyncioTestCase):
     async def test_read_message_returns_none_on_bad_checksum(self):
         client = At2PlusClient("127.0.0.1", task_creator=lambda coro: None)
         status = AcStatus(1, AcPower.ON, AcMode.COOL, AcFanSpeed.MEDIUM, 22.0, 22.0, False, False, False, False, 0)
-        message_bytes = bytearray(AcStatusMessage([status]).to_bytes())
+        subdata = AcStatusMessage([status]).to_bytes()[8:-2]
+        header = Header(AddressMsgType.NORMAL, MessageType.CONTROL_STATUS, len(subdata), _received=True)
+        buffer = prime_message_buffer(header)
+        buffer.append_bytes(subdata)
+        add_checksum_message_buffer(buffer)
+        message_bytes = bytearray(buffer.to_bytes())
         message_bytes[-1] ^= 0xFF
 
         client._client = Mock()
@@ -75,12 +86,13 @@ class TestAt2PlusClient(unittest.IsolatedAsyncioTestCase):
         client = At2PlusClient("127.0.0.1", task_creator=lambda coro: None)
         client._client = Mock()
         client._client.send = AsyncMock()
-        client._ability_message_queue = asyncio.Queue()
 
         ability = AcAbility(1, "AC1", 0, 1, [AcSetMode.COOL], [AcFanSpeed.AUTO], SetpointLimits(10, 30))
-        await client._ability_message_queue.put(AcAbilityMessage([ability]))
+        task = asyncio.create_task(client._request_ac_ability(1))
+        await asyncio.sleep(0)
+        client._dispatch_ability_message(AcAbilityMessage([ability]))
 
-        result = await client._request_ac_ability(1)
+        result = await task
         self.assertEqual(result, ability)
         client._client.send.assert_awaited_once()
 
@@ -88,13 +100,15 @@ class TestAt2PlusClient(unittest.IsolatedAsyncioTestCase):
         client = At2PlusClient("127.0.0.1", task_creator=lambda coro: None)
         client._client = Mock()
         client._client.send = AsyncMock()
-        client._ability_message_queue = asyncio.Queue()
 
         ability = AcAbility(2, "AC2", 0, 1, [AcSetMode.COOL], [AcFanSpeed.AUTO], SetpointLimits(10, 30))
-        await client._ability_message_queue.put(AcAbilityMessage([ability]))
+        task = asyncio.create_task(client._request_ac_ability(1, timeout=0.01))
+        await asyncio.sleep(0)
+        client._dispatch_ability_message(AcAbilityMessage([ability]))
 
-        result = await client._request_ac_ability(1)
+        result = await task
         self.assertIsNone(result)
+        client._client.send.assert_awaited_once()
 
     async def test_handle_group_name_updates_group_name(self):
         client = At2PlusClient("127.0.0.1", task_creator=lambda coro: None)
@@ -104,7 +118,7 @@ class TestAt2PlusClient(unittest.IsolatedAsyncioTestCase):
 
         buffer = Buffer(11)
         buffer.append_bytes(bytes([0xFF, ExtendedMessageSubType.GROUP_NAME]))
-        buffer.append_bytes(bytes([5]) + b"Kitchen\x00" + b"\x00")
+        buffer.append_bytes(bytes([5]) + b"Kitchen\x00")
         message = Message(Header(AddressMsgType.EXTENDED, MessageType.EXTENDED, 11, _received=True), buffer)
 
         client._read_message = AsyncMock(return_value=message)

@@ -104,7 +104,7 @@ class AcInfo:
     def parse(ac_number: int, ac_status1: int, ac_error_code: int, ac_status2: int, ac_mode: int, ac_fan_speed: int,
               ac_set_temp: int, ac_measured_temp: int, ac_brand: int, ac_gateway_id: int, ac_name: bytes) -> AcInfo | None:
 
-        if (ac_fan_speed == 0 and ac_fan_speed == 0 and ac_gateway_id == 0):
+        if (ac_status1 == 0 and ac_fan_speed == 0 and ac_gateway_id == 0):
             # This AC isn't connected
             return None
 

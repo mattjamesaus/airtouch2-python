@@ -32,6 +32,13 @@ class TestBuffer(unittest.TestCase):
         with self.assertRaises(BufferError):
             buffer.read_bytes(1)
 
+    def test_read_bytes_oversize_raises(self):
+        buffer = Buffer(4)
+        buffer.append_bytes(b"abcd")
+
+        with self.assertRaises(BufferError):
+            buffer.read_bytes(5)
+
     def test_append_object(self):
         buffer = Buffer(2)
         self.assertTrue(buffer.append(DummySerializable(b"xy")))

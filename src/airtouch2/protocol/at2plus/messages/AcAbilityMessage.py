@@ -21,7 +21,7 @@ class SetpointLimits:
     def __repr__(self) -> str:
         return f"""
         min: {self.min}
-        max: {self.min}
+        max: {self.max}
         """
 
 
@@ -125,7 +125,6 @@ class AcAbilityMessage(Serializable):
             subdata_slice = subdata[i:i+length]
             ac_ability = AcAbility.from_bytes(subdata_slice)
             ac_ability_list.append(ac_ability)
-            break  # ! Ignores the other ACs in the list for now
         ac_ability_message = AcAbilityMessage(ac_ability_list)
         return ac_ability_message
 

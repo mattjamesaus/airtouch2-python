@@ -83,8 +83,23 @@ class TestNetClient(unittest.IsolatedAsyncioTestCase):
 
         await client.send(DummyMessage(b"abc"))
 
-        writer.write.assert_called_once_with(b"abc")
+        self.assertEqual(writer.write.call_count, 2)
+        writer.write.assert_any_call(b"abc")
         self.assertEqual(writer.drain.await_count, 2)
+        client._try_reconnect.assert_awaited_once()
+
+    async def test_send_resends_after_reconnect(self):
+        client = NetClient("127.0.0.1", 1234, AsyncMock(), AsyncMock(), task_creator=lambda coro: None)
+        writer = Mock()
+        writer.write = Mock()
+        writer.drain = AsyncMock(side_effect=[ConnectionResetError(), None])
+        client._writer = writer
+        client._try_reconnect = AsyncMock()
+
+        await client.send(DummyMessage(b"abc"))
+
+        self.assertEqual(writer.write.call_count, 2)
+        writer.write.assert_any_call(b"abc")
         client._try_reconnect.assert_awaited_once()
 
     async def test_read_bytes_returns_data(self):

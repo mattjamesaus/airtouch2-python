@@ -11,22 +11,34 @@ NetworkOrHostDownErrors = (errno.EHOSTUNREACH, errno.ECONNREFUSED,  errno.ETIMED
                            errno.ENETDOWN, errno.ENETUNREACH, errno.ENETRESET, errno.ECONNABORTED)
 
 def _set_keepalive_options(
-    sock: socket.socket, idle_seconds: int, interval_seconds: int, count: int
+    sock: socket.socket | None, idle_seconds: int, interval_seconds: int, count: int
 ):
-    if hasattr(sock, "SO_KEEPALIVE"):
+    if sock is None:
+        return
+    try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    if hasattr(sock, "TCP_KEEPIDLE"):
+    except (AttributeError, OSError):
+        pass
+    try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle_seconds)
-    if hasattr(socket, "TCP_KEEPINTVL"):
+    except (AttributeError, OSError):
+        pass
+    try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, interval_seconds)
-    if hasattr(socket, "TCP_KEEPCNT"):
+    except (AttributeError, OSError):
+        pass
+    try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, count)
-    if hasattr(socket, "TCP_USER_TIMEOUT"):
+    except (AttributeError, OSError):
+        pass
+    try:
         sock.setsockopt(
             socket.IPPROTO_TCP,
             socket.TCP_USER_TIMEOUT,
             1000 * (idle_seconds + (interval_seconds * count)),
         )
+    except (AttributeError, OSError):
+        pass
 
 class NetClient:
     """A generic network client"""
@@ -91,18 +103,17 @@ class NetClient:
         """Send the serializable 'message'"""
         if self._writer is None:
             raise RuntimeError("Client is not connected - call connect() first")
-        else:
-            bytes_to_write = message.to_bytes()
-            _LOGGER.debug(f"Sending {message.__class__.__name__} with data: {bytes_to_write.hex(':')}")
-            _LOGGER.debug(f"{repr(message)}")
+        bytes_to_write = message.to_bytes()
+        _LOGGER.debug(f"Sending {message.__class__.__name__} with data: {bytes_to_write.hex(':')}")
+        _LOGGER.debug(f"{repr(message)}")
+        drained: bool = False
+        while not drained:
             self._writer.write(bytes_to_write)
-            drained: bool = False
-            while not drained:
-                try:
-                    await self._writer.drain()
-                    drained = True
-                except (ConnectionResetError, asyncio.IncompleteReadError, TimeoutError) as e:
-                    await self._try_reconnect()
+            try:
+                await self._writer.drain()
+                drained = True
+            except (BrokenPipeError, ConnectionResetError, asyncio.IncompleteReadError, TimeoutError):
+                await self._try_reconnect()
 
     async def read_bytes(self, size: int) -> bytes | None:
         """

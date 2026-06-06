@@ -31,7 +31,7 @@ class At2PlusClient:
         self._dump_responses = dump_responses
         self._task_creator = task_creator
         self._new_ac_callbacks: list[Callback] = []
-        self._ability_message_queue: asyncio.Queue[AcAbilityMessage] = asyncio.Queue()
+        self._pending_ability_requests: dict[int, asyncio.Future[AcAbility]] = {}
         self._found_ac = asyncio.Event()
         self._new_group_callbacks: list[Callback] = []
 
@@ -44,7 +44,10 @@ class At2PlusClient:
         self._client.run()
 
     async def wait_for_ac(self, timeout: int = 5) -> None:
-        await asyncio.wait_for(self._found_ac.wait(), timeout)
+        try:
+            await asyncio.wait_for(self._found_ac.wait(), timeout)
+        except TimeoutError:
+            pass
 
     async def stop(self) -> None:
         await self._client.stop()
@@ -101,7 +104,7 @@ class At2PlusClient:
                 ability_message_bytes = message.data_buffer.read_remaining()
                 _LOGGER.debug(f"Creating ability message from {len(ability_message_bytes)} bytes")
                 ability = AcAbilityMessage.from_bytes(ability_message_bytes)
-                await self._ability_message_queue.put(ability)
+                self._dispatch_ability_message(ability)
             elif subheader.sub_type == ExtendedMessageSubType.GROUP_NAME:
                 group_names_subdata = message.data_buffer.read_remaining()
                 for id, name in group_names_from_subdata(group_names_subdata).items():
@@ -175,6 +178,15 @@ class At2PlusClient:
 
         return Message(header, buffer)
 
+    def _dispatch_ability_message(self, ability_message: AcAbilityMessage) -> None:
+        for ability in ability_message.abilities:
+            future = self._pending_ability_requests.pop(ability.ac_id, None)
+            if future is None:
+                _LOGGER.debug("Received unexpected ability response for AC%s", ability.ac_id)
+                continue
+            if not future.done():
+                future.set_result(ability)
+
     async def _on_connect(self) -> None:
         # request groups
         await self._client.send(GroupStatusMessage([]))
@@ -198,20 +210,24 @@ class At2PlusClient:
             _LOGGER.debug(f"Updated AC {status.id} with value {status}")
         _LOGGER.debug("Finished handling AC status message")
 
-    async def _request_ac_ability(self, id: int) -> AcAbility | None:
+    async def _request_ac_ability(self, id: int, timeout: float = 5.0) -> AcAbility | None:
         _LOGGER.debug(f"Requesting ability of AC{id}")
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[AcAbility] = loop.create_future()
+        self._pending_ability_requests[id] = future
         await self._client.send(RequestAcAbilityMessage(id))
         _LOGGER.debug("Waiting for ability message response...")
-        ac_ability = await self._ability_message_queue.get()
-        _LOGGER.debug("Got ability message response")
-        if len(ac_ability.abilities) != 1:
-            _LOGGER.warning(f"Expected ability of single requested AC but got {len(ac_ability.abilities)}")
+        try:
+            ability = await asyncio.wait_for(future, timeout)
+        except TimeoutError:
+            _LOGGER.warning(f"Timed out waiting for ability response for AC{id}")
+            self._pending_ability_requests.pop(id, None)
             return None
-        if ac_ability.abilities[0].ac_id != id:
-            _LOGGER.warning(f"Requested ability of AC{id} but got AC{ac_ability.abilities[0].ac_id}")
+        if ability.ac_id != id:
+            _LOGGER.warning(f"Requested ability of AC{id} but got AC{ability.ac_id}")
             return None
-        _LOGGER.debug(f"Got ability of AC{id}: {ac_ability.abilities[0]}")
-        return ac_ability.abilities[0]
+        _LOGGER.debug(f"Got ability of AC{id}: {ability}")
+        return ability
 
     async def _handle_group_status_message(self, message: GroupStatusMessage):
         _LOGGER.debug("Handling group status message")

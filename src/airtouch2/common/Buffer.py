@@ -51,12 +51,17 @@ class Buffer(Serializable):
         return self._data
 
     def read_bytes(self, size: int) -> bytes:
-        if (self._tail >= len(self._data)):
+        if size < 0:
+            raise ValueError("Size must be non-negative")
+        if self._tail >= len(self._data):
             raise BufferError("All data from this buffer has been read")
-        if (self._tail >= self._head):
+        if self._tail >= self._head:
             raise BufferError("There is no remaining data to read")
-        if (self._mutable):
+        if self._mutable:
             raise BufferError("Cannot read from incomplete buffer")
+        if self._tail + size > self._head:
+            raise BufferError(
+                "Cannot read more bytes than are available in the buffer")
         start = self._tail
         self._tail += size
         return self._data[start:self._tail]
