@@ -22,3 +22,12 @@ class TestSubHeader(unittest.TestCase):
         serialized = subheader.to_bytes()
         expected = bytes([ControlStatusSubType.GROUP_CONTROL, 0]) + sdl.to_bytes()
         self.assertEqual(serialized, expected)
+
+    def test_aux_sensor_status_subtype(self):
+        self.assertEqual(ControlStatusSubType.AUX_SENSOR_STATUS, 0x2B)
+
+    def test_from_bytes_preserves_raw_sub_type(self):
+        raw = bytes([0x99, 0, 0, 0, 0, 0, 0, 0])
+        subheader = ControlStatusSubHeader.from_bytes(raw)
+        self.assertEqual(subheader.sub_type, ControlStatusSubType.UNSET)
+        self.assertEqual(subheader.raw_sub_type, 0x99)
